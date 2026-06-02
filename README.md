@@ -46,7 +46,7 @@ python main.py
 ```
 程序运行后，会在当前目录下自动生成 experimental_group_google_evidence.csv。
 
-### 输出结果说明 (Output)
+### 4. 输出结果说明 (Output)
 运行成功后，系统会在表格中新增以下字段供人工复核或大模型提取：
 
 google_query: 系统自动生成的年鉴检索词。
@@ -55,10 +55,14 @@ google_evidence_text: 截取到的核心证据块（包含 AI 概览内容与官
 
 google_fetch_status: 记录该行数据的提取状态（success 或 failed）。
 
+---
+
 ## 🗺️ 未来路线图 (Roadmap)
 [ ] LLM 结构化数据自动回填：未来计划接入 OpenAI 或 DeepSeek API，直接从提取到的文本片段中将纯数字解析出来，实现全自动无缝回填。
 
 [ ] 多源 AI 搜索适配：增加对微软 Bing AI、百度等平台的检索适配。
+
+---
 
 ## 📄 开源许可证 (License)
 本项目采用 MIT License 协议开源。
