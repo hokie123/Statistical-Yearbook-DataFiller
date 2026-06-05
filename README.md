@@ -1,68 +1,202 @@
-# Statistical-Yearbook-DataFiller (统计年鉴数据填补器)
+# Statistical-Yearbook-DataFiller
 
-A data augmentation tool designed for empirical researchers to extract evidence and cross-verify or fill missing values in statistical yearbooks using Google AI Overviews.
+Statistical-Yearbook-DataFiller is a traceable evidence collection and verification tool for filling or validating missing values in city/county-level statistical yearbook panels.
 
-专为实证学术研究打造的统计年鉴数据缺失填补工具。通过自动化检索 Google AI Overview 及官方统计公报，构建“可溯源、高可信度”的宏观经济指标文本证据链。
+`Statistical-Yearbook-DataFiller` 不是“自动替代研究者判断”的填值器，而是一个面向城市/区县/县域面板数据研究的证据链助手：它为缺失值核验、补充和异常值复核生成可追溯、可复核、可引用的搜索证据。
 
----
+## Positioning
 
-## 📌 项目背景 (Background)
+在中国城市与县域面板数据研究中，统计年鉴常见的问题包括：
 
-在经济学、社会学、区域科学以及城市规划等领域的实证研究中，宏观面板数据（如各级统计年鉴、县志中的区县经济指标）经常存在不同程度的结构性缺失。传统的统计学填补方法（如线性插值、均值填补、多重插补法）在面对政策突发冲击或年份宏观经济大幅波动时，往往由于缺乏现实依据而导致填补值失真，难以说服论文评审专家。
+- 年份缺失或披露不连续
+- 指标口径变化
+- 行政区划调整
+- 不同来源之间数值不一致
+- 单位和量纲混乱
 
-本项目针对这一学术痛点，利用自动化技术动态构建精准的年鉴检索式（例如：`[年份]年 [区县/城市] 农村居民人均可支配收入`），模拟学者检索行为，深入挖掘 Google AI Overview 整合的内容以及官方公开的《国民经济和社会发展统计公报》等高可信度原始文本。通过提取并保存最原始的数字依据，为学术研究的数据回填提供坚实的“证据链（Evidence Chain）”。笔者在此抛砖引玉，欢迎各位学者拓展更多应用场景。
+传统线性插值、均值填补、多重插补可以作为控制变量处理的辅助手段，但对于核心变量，审稿时往往需要更强的现实依据。这个项目的目标，是把“我为什么这样补这个值”变成一条可检查的证据链。
 
----
+## What It Does
 
-## 🚀 核心功能 (Features)
+- 为缺失值自动构造更接近研究场景的查询语句
+- 用浏览器自动化抓取搜索结果页文本
+- 保留首个候选来源的标题、链接、域名和证据级别
+- 从证据片段中提取数值候选、单位线索和冲突标记
+- 输出可人工复核的 CSV，而不是直接覆盖原始数据
 
-- **🔍 年鉴检索式动态构建**：根据输入的结构化表格，自动将年份、区县、目标指标合成为高命中率的学术检索 Query。
-- **🛡️ 动态反爬机制集成**：基于 `Playwright` 异步架构，内置自动化特征擦除 (`AutomationControlled`)、随机延迟分布以及 User-Agent 伪装，稳定模拟人类正常的检索行为。
-- **📄 证据链智能截取**：系统自动定位页面中含有 “AI 概览/AI Overview”、“统计公报”、“可支配收入” 的核心语境，抓取前后关联的上下文证据并保存。
-- **💾 高强韧度断点续传**：数据保存机制置于核心循环内部，遇到网络中断或风控时，已爬取的数据会自动完好保存，适合大规模面板数据清洗。
+当前默认场景是 `rural_income`（农村居民人均可支配收入），但脚本结构已经按“证据采集与复核”设计，可以继续扩展到其他指标。
 
----
+## Project Structure
 
-## 🛠️ 快速上手 (Quick Start)
+项目现在不再是单一 `main.py` 脚本，而是一个可继续扩展的包：
 
-### 1. 安装依赖环境 (Installation)
-本项目基于 Python 3.10+ 开发，利用 Playwright 驱动浏览器。请在终端执行以下命令安装依赖：
+```text
+statistical_yearbook_datafiller/
+├─ cli.py          # CLI 入口
+├─ config.py       # 参数与运行配置
+├─ constants.py    # 指标与输出字段常量
+├─ scraping.py     # 浏览器抓取与搜索结果提取
+├─ evidence.py     # 规则法证据解析、单位识别、候选值提取
+├─ llm.py          # OpenAI-compatible LLM 分类层
+└─ pipeline.py     # 主流程编排
+```
+
+这样拆分后，后续要做的扩展会更容易：
+
+- 增加新的指标配置
+- 增加新的搜索源
+- 调整证据抽取规则
+- 替换或升级 LLM 提示词
+- 加入 PDF / 公报专用解析器
+
+## Evidence Philosophy
+
+项目默认将证据分成三个等级：
+
+- `A`: 地方统计局、国家统计局、政府官网、官方统计公报
+- `B`: 年鉴 PDF、政府报告、较权威二手数据库
+- `C`: 搜索摘要、AI Overview、普通网页
+
+`AI Overview` 只能作为入口或辅助线索，不能默认视为最终权威来源。
+
+## Output Schema
+
+运行后会生成 `evidence_review_output.csv`。核心字段包括：
+
+- `search_query`: 实际执行的查询语句
+- `search_url`: 对应搜索链接
+- `fetch_status`: 抓取状态
+- `evidence_text`: 用于人工复核的证据片段
+- `source_title`, `source_url`, `source_domain`: 候选来源信息
+- `source_type`, `evidence_level`: 来源分类与证据等级
+- `value_candidates`: 从文本中提取的数值候选
+- `suggested_fill_value`: 建议补充值
+- `unit`, `unit_flag`: 单位识别结果与风险标记
+- `metric_conflict_flag`: 指标口径冲突提示
+- `confidence`: `high` / `medium` / `low`
+- `need_manual_check`: 是否需要人工确认
+- `manual_review_status`, `review_notes`: 复核状态与备注
+
+这个输出表的设计目标，是让研究者保留原始数据，同时记录每个建议值背后的证据。
+
+## Quick Start
+
+### 1. Install
 
 ```bash
 pip install pandas playwright
 playwright install
 ```
 
-### 2. 准备数据 (Data Setup)
-在项目根目录下放置一个 data.csv 文件（本仓库已提供样例数据供参考）。确保数据表格中包含以下必需列：
-year: 目标年份
-ent_county: 地区/城市/区县名称
-rural_income: 存在缺失值的目标指标列 (程序会自动识别其中的空值行并进行循证检索)
-
-### 3. 启动程序 (Usage)
+也可以直接安装为本地命令行工具：
 
 ```bash
-python main.py
+pip install -e .
 ```
-程序运行后，会在当前目录下自动生成 experimental_group_google_evidence.csv。
 
-### 4. 输出结果说明 (Output)
-运行成功后，系统会在表格中新增以下字段供人工复核或大模型提取：
+### 2. Prepare input data
 
-google_query: 系统自动生成的年鉴检索词。
+将输入 CSV 放在仓库目录，至少包含以下列：
 
-google_evidence_text: 截取到的核心证据块（包含 AI 概览内容与官方统计公报片段）。
+- `year`
+- `ent_county`
+- `ent_code`
+- `rural_income`
 
-google_fetch_status: 记录该行数据的提取状态（success 或 failed）。
+示例：
 
----
+```csv
+year,ent_county,ent_code,rural_income
+2021,曹县,371721,
+2022,延安市宝塔区,610602,
+2020,遂宁市安居区,510904,
+```
 
-## 🗺️ 未来路线图 (Roadmap)
-[ ] LLM 结构化数据自动回填：未来计划接入 OpenAI 或 DeepSeek API，直接从提取到的文本片段中将纯数字解析出来，实现全自动无缝回填。
+### 3. Generate a review sheet only
 
-[ ] 多源 AI 搜索适配：增加对微软 Bing AI、百度等平台的检索适配。
+先只生成待复核表，不发起浏览器抓取：
 
----
+```bash
+python main.py --prepare-only
+```
 
-## 📄 开源许可证 (License)
-本项目采用 MIT License 协议开源。
+### 4. Run full evidence collection
+
+```bash
+python main.py --headless
+```
+
+或者：
+
+```bash
+sydf --headless
+```
+
+常用参数：
+
+```bash
+python main.py --headless --max-rows 20
+python main.py --input custom_input.csv --output custom_output.csv
+```
+
+### 5. Enable optional LLM classification
+
+如果你希望对抓下来的内容再做一层结构化分类，可以配置兼容 OpenAI Chat Completions 的 API：
+
+```bash
+set LLM_API_BASE=https://api.openai.com/v1
+set LLM_API_KEY=your_api_key
+set LLM_MODEL=gpt-4.1-mini
+python main.py --headless
+```
+
+也可以直接通过参数传入：
+
+```bash
+python main.py --headless ^
+  --llm-api-base https://api.openai.com/v1 ^
+  --llm-api-key your_api_key ^
+  --llm-model gpt-4.1-mini
+```
+
+启用后，输出表会增加：
+
+- `llm_provider`
+- `llm_model`
+- `llm_status`
+- `llm_structured_output`
+
+这层 LLM 主要用于：
+
+- 来源类型分类
+- 证据等级判断
+- 候选值排序
+- 单位与口径冲突标记
+- 是否需要人工复核的建议
+
+## Recommended Workflow
+
+1. 保留原始数据文件
+2. 用本工具生成证据复核表
+3. 人工确认 `suggested_fill_value`、单位和来源
+4. 仅在确认后回填到正式面板
+5. 在论文或附录中说明补值规则和复核方式
+
+## Limitations
+
+- 当前抓取入口仍然依赖搜索结果页，不应把搜索摘要本身视为最终依据
+- 当前数值提取是规则法，不等于已完成结构化识别
+- 不建议直接将建议值自动写回核心解释变量或核心被解释变量
+- 面向长期使用时，建议扩展为多模式检索：官方网页直连、PDF 解析、搜索 API
+
+## Roadmap
+
+- 支持多指标配置，而不是把指标写死在脚本里
+- 增加官方来源优先抓取和页面级提取
+- 增加 PDF / 统计公报解析
+- 增加更细的 LLM 辅助字段抽取，但保留人工确认环节
+- 增加 Excel 审核模板或轻量复核界面
+
+## License
+
+MIT

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "statistical-yearbook-datafiller"
+version = "0.1.0"
+description = "Traceable evidence collection and verification for statistical yearbook missing values."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas",
+    "playwright",
+]
+
+[project.scripts]
+sydf = "statistical_yearbook_datafiller.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["statistical_yearbook_datafiller*"]
