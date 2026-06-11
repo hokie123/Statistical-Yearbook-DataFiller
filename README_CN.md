@@ -1,5 +1,5 @@
 <p align="right">
-  <a href="README.md"><strong>中文</strong></a> | <a href="README_EN.md"><strong>English</strong></a>
+  <a href="README_CN.md"><strong>中文</strong></a> | <a href="README.md"><strong>English</strong></a>
 </p>
 
 <h1 align="center">Statistical-Yearbook-DataFiller</h1>
