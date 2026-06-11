@@ -1,29 +1,465 @@
+import asyncio
+import random
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 
 from .constants import DEFAULT_USER_AGENT
 
+USER_AGENTS = [
+    DEFAULT_USER_AGENT,
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/136.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/136.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (X11; Linux x86_64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/136.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) "
+        "Gecko/20100101 Firefox/137.0"
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:137.0) "
+        "Gecko/20100101 Firefox/137.0"
+    ),
+]
 
-async def create_context(playwright: Any, headless: bool) -> Any:
-    browser = await playwright.chromium.launch(
-        headless=headless,
-        slow_mo=120,
-        args=[
+RETRYABLE_ERROR_MARKERS = (
+    "net::err_",
+    "connection reset",
+    "connection refused",
+    "connection timed out",
+    "timed out",
+    "temporarily unavailable",
+    "proxy",
+)
+
+# CAPTCHA 检测 —— Google 反爬页面的特征
+CAPTCHA_MARKERS = (
+    "/sorry/index",
+    "unusual traffic",
+    "我们的系统检测到您的计算机网络中存在异常流量",
+    "automated queries",
+)
+
+
+@dataclass
+class SearchSessionResult:
+    page_text: str
+    results: list[dict[str, str]]
+    final_url: str
+    user_agent: str
+    proxy_port: int | None
+
+
+class SearchRequestError(RuntimeError):
+    def __init__(self, message: str, *, retryable: bool, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+        self.status_code = status_code
+
+
+class CaptchaBlockedError(RuntimeError):
+    """Raised when Google returns a CAPTCHA/block page."""
+
+    def __init__(self, block_url: str) -> None:
+        super().__init__(f"Blocked by Google CAPTCHA: {block_url}")
+        self.block_url = block_url
+
+
+def choose_user_agent() -> str:
+    return random.choice(USER_AGENTS)
+
+
+def _is_retryable_error_message(message: str) -> bool:
+    lowered = message.lower()
+    return any(marker in lowered for marker in RETRYABLE_ERROR_MARKERS)
+
+
+def _get_playwright_timeout_error() -> type[Exception]:
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    return PlaywrightTimeoutError
+
+
+def is_captcha_page(page_url: str, page_text: str = "") -> bool:
+    """Detect whether the current page is a Google CAPTCHA/block page."""
+    lowered_url = page_url.lower()
+    for marker in CAPTCHA_MARKERS:
+        if marker in lowered_url:
+            return True
+    if page_text:
+        lowered_text = page_text.lower()
+        for marker in CAPTCHA_MARKERS:
+            if marker in lowered_text:
+                return True
+    return False
+
+
+async def apply_stealth_to_page(page: Any) -> None:
+    """Apply playwright-stealth evasions to a page."""
+    from playwright_stealth import Stealth
+
+    stealth = Stealth(
+        chrome_app=True,
+        chrome_csi=True,
+        chrome_load_times=True,
+        chrome_runtime=False,
+        hairline=True,
+        iframe_content_window=True,
+        media_codecs=True,
+        navigator_hardware_concurrency=True,
+        navigator_languages=True,
+        navigator_permissions=True,
+        navigator_platform=True,
+        navigator_plugins=True,
+        navigator_user_agent=True,
+        navigator_user_agent_data=True,
+        navigator_vendor=True,
+        navigator_webdriver=True,
+        error_prototype=True,
+        sec_ch_ua=True,
+        webgl_vendor=True,
+    )
+    await stealth.apply_stealth_async(page)
+
+
+async def create_persistent_context(
+    playwright: Any,
+    user_data_dir: str,
+    headless: bool,
+    proxy_port: int | None,
+) -> Any:
+    """
+    Create a persistent browser context that saves cookies/session across runs.
+
+    This is the key to bypassing Google CAPTCHA: solve it once in headed mode,
+    and the session cookie is persisted in ``user_data_dir`` for all future runs.
+    """
+    user_agent = choose_user_agent()
+    launch_options: dict[str, Any] = {
+        "headless": headless,
+        "slow_mo": 120,
+        "args": [
             "--disable-blink-features=AutomationControlled",
             "--start-maximized",
+            "--no-sandbox",
         ],
-    )
-    context = await browser.new_context(
+    }
+    if proxy_port is not None:
+        launch_options["proxy"] = {"server": f"http://127.0.0.1:{proxy_port}"}
+
+    context = await playwright.chromium.launch_persistent_context(
+        user_data_dir=user_data_dir,
+        **launch_options,
         locale="zh-CN",
         viewport={"width": 1366, "height": 900},
-        user_agent=DEFAULT_USER_AGENT,
+        user_agent=user_agent,
     )
     return context
 
 
-async def search_google(page: Any, query: str) -> tuple[str, list[dict[str, str]]]:
+async def resolve_captcha_interactive(playwright: Any, user_data_dir: str, proxy_port: int | None = None) -> None:
+    """
+    交互式 CAPTCHA 解决工具。
+    在可见模式打开 Google，让用户手动完成验证。
+    验证完成后关闭浏览器，session 保存在 user_data_dir 中。
+    """
+    print(
+        "\n========================================"
+        "\n  Google CAPTCHA 手动解决工具"
+        "\n========================================"
+        "\n正在打开浏览器..."
+        "\n请在浏览器中："
+        "\n  1. 完成 Google 的人机验证"
+        "\n  2. 验证通过后，关闭浏览器窗口"
+        "\n（session 将保存到后续复用）"
+        "\n========================================"
+    )
+
+    launch_kwargs: dict[str, Any] = {
+        "headless": False,
+        "slow_mo": 50,
+        "args": [
+            "--disable-blink-features=AutomationControlled",
+            "--start-maximized",
+            "--no-sandbox",
+        ],
+    }
+    if proxy_port is not None:
+        launch_kwargs["proxy"] = {"server": f"http://127.0.0.1:{proxy_port}"}
+
+    context = await playwright.chromium.launch_persistent_context(
+        user_data_dir=user_data_dir,
+        **launch_kwargs,
+        locale="zh-CN",
+        viewport={"width": 1366, "height": 900},
+    )
+
+    page = await context.new_page()
+
+    # 应用 stealth
+    try:
+        await apply_stealth_to_page(page)
+    except Exception:
+        pass
+
+    # 打开 Google，触发 CAPTCHA
+    await page.goto("https://www.google.com/search?q=test", wait_until="domcontentloaded", timeout=60000)
+    await page.wait_for_timeout(2000)
+
+    # 如果已经跳到了 sorry 页面，直接导航过去
+    if is_captcha_page(page.url):
+        print("  CAPTCHA 页面已加载，请在浏览器中完成验证...")
+    else:
+        print("  Google 首页已加载，可以手动搜索触发验证，或关闭浏览器。")
+
+    # 轮询检测 CAPTCHA 是否已解决（URL 不再是 sorry 页面）
+    print("  等待验证完成（检测到 CAPTCHA 解除后将自动继续）...")
+    for _ in range(300):  # 最多等 5 分钟
+        await asyncio.sleep(1)
+        try:
+            current_url = page.url
+            if not is_captcha_page(current_url) and "google.com/search" in current_url:
+                print("\n  ✅ CAPTCHA 已解除！session 已保存。")
+                break
+        except Exception:
+            break
+    else:
+        print("\n  轮询超时，但 session 可能已经保存。")
+
+    await page.close()
+    await context.close()
+    print("  浏览器已关闭，现在可以用 --headless 模式运行了。\n")
+
+
+async def recover_from_captcha_block(
+    playwright: Any,
+    user_data_dir: str,
+    block_url: str,
+    proxy_port: int | None,
+) -> Any:
+    """
+    When Google blocks us with a CAPTCHA, reopen the browser in headed mode
+    so the user can manually solve it. Once solved, return a fresh persistent
+    context (now with a trusted session cookie saved to user_data_dir).
+    """
+    print(
+        "\n========================================"
+        "\n  Google CAPTCHA 检测到！"
+        "\n========================================"
+        "\n浏览器将在可见模式打开，请完成人机验证。"
+        "\n验证通过后页面会自动跳转，无需手动操作。"
+        "\n========================================"
+    )
+
+    recovery_context = await playwright.chromium.launch_persistent_context(
+        user_data_dir=user_data_dir,
+        headless=False,
+        slow_mo=50,
+        locale="zh-CN",
+        viewport={"width": 1366, "height": 900},
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--start-maximized",
+            "--no-sandbox",
+        ],
+    )
+    if proxy_port is not None:
+        await recovery_context.close()
+        print(f"  Note: proxy port {proxy_port} not applied during CAPTCHA recovery (use direct connection)")
+        recovery_context = await playwright.chromium.launch_persistent_context(
+            user_data_dir=user_data_dir,
+            headless=False,
+            slow_mo=50,
+            locale="zh-CN",
+            viewport={"width": 1366, "height": 900},
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--start-maximized",
+                "--no-sandbox",
+            ],
+        )
+
+    page = await recovery_context.new_page()
+    await page.goto(block_url, wait_until="domcontentloaded", timeout=60000)
+
+    # 轮询检测 CAPTCHA 是否已解决
+    print("  等待人机验证完成（自动检测，最多等待 5 分钟）...")
+    for _ in range(300):
+        await asyncio.sleep(1)
+        try:
+            current_url = page.url
+            if not is_captcha_page(current_url) and ("google.com/search" in current_url or "google.com/webhp" in current_url):
+                print("  ✅ CAPTCHA 已解除！继续执行。")
+                break
+        except Exception:
+            await asyncio.sleep(1)
+            continue
+    else:
+        print("  ⚠️ 轮询超时，尝试继续（session 可能已保存）。")
+
+    await page.close()
+    print("  CAPTCHA 验证完成！session 已保存到浏览器 profile。\n")
+
+    return recovery_context
+
+
+async def search_google_with_context(
+    context: Any,
+    query: str,
+) -> tuple[str, list[dict[str, str]], str]:
+    """
+    Perform a Google search using an existing persistent context.
+    Applies stealth and returns (page_text, results, final_url).
+    """
+    timeout_error = _get_playwright_timeout_error()
+    page = await context.new_page()
+
+    # 对每个新页面应用 stealth 反检测
+    try:
+        await apply_stealth_to_page(page)
+    except Exception:
+        pass  # stealth 优化非必需，出错也不影响
+
     search_url = "https://www.google.com/search?q=" + quote_plus(query)
-    await page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+    try:
+        response = await page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+    except timeout_error as exc:
+        await page.close()
+        raise SearchRequestError(f"request timeout for query: {query}", retryable=True) from exc
+    except Exception as exc:
+        await page.close()
+        message = str(exc) or repr(exc)
+        raise SearchRequestError(message, retryable=_is_retryable_error_message(message)) from exc
+
+    status_code = response.status if response is not None else None
+    final_url = page.url
+
+    # 检测 CAPTCHA
+    if is_captcha_page(final_url):
+        await page.close()
+        raise CaptchaBlockedError(block_url=final_url)
+
+    if status_code == 429 or (status_code is not None and status_code >= 500):
+        await page.close()
+        raise SearchRequestError(
+            f"temporary HTTP {status_code} for query: {query}",
+            retryable=True,
+            status_code=status_code,
+        )
+
+    await page.wait_for_timeout(4000)
+    try:
+        await page.mouse.wheel(0, 1200)
+        await page.wait_for_timeout(1500)
+    except Exception:
+        pass
+
+    try:
+        page_text = await page.locator("body").inner_text(timeout=20000)
+    except timeout_error as exc:
+        await page.close()
+        raise SearchRequestError(f"page text timeout for query: {query}", retryable=True) from exc
+    except Exception as exc:
+        await page.close()
+        message = str(exc) or repr(exc)
+        raise SearchRequestError(message, retryable=_is_retryable_error_message(message)) from exc
+
+    results = await extract_search_results(page)
+    await page.close()
+    return page_text, results, final_url
+
+
+async def create_context(
+    playwright: Any,
+    headless: bool,
+    user_agent: str,
+    proxy_port: int | None,
+) -> tuple[Any, Any]:
+    launch_options: dict[str, Any] = {
+        "headless": headless,
+        "slow_mo": 120,
+        "args": [
+            "--disable-blink-features=AutomationControlled",
+            "--start-maximized",
+        ],
+    }
+    if proxy_port is not None:
+        launch_options["proxy"] = {"server": f"http://127.0.0.1:{proxy_port}"}
+
+    browser = await playwright.chromium.launch(
+        **launch_options,
+    )
+    context = await browser.new_context(
+        locale="zh-CN",
+        viewport={"width": 1366, "height": 900},
+        user_agent=user_agent,
+    )
+    return browser, context
+
+
+async def run_search_query(
+    playwright: Any,
+    query: str,
+    headless: bool,
+    proxy_port: int | None,
+) -> SearchSessionResult:
+    user_agent = choose_user_agent()
+    browser = None
+    context = None
+    try:
+        browser, context = await create_context(playwright, headless, user_agent, proxy_port)
+        page = await context.new_page()
+        page_text, results, final_url = await search_google(page, query)
+        return SearchSessionResult(
+            page_text=page_text,
+            results=results,
+            final_url=final_url,
+            user_agent=user_agent,
+            proxy_port=proxy_port,
+        )
+    except SearchRequestError:
+        raise
+    except Exception as exc:
+        message = str(exc) or repr(exc)
+        raise SearchRequestError(message, retryable=_is_retryable_error_message(message)) from exc
+    finally:
+        if context is not None:
+            await context.close()
+        if browser is not None:
+            await browser.close()
+
+
+async def search_google(page: Any, query: str) -> tuple[str, list[dict[str, str]], str]:
+    timeout_error = _get_playwright_timeout_error()
+    search_url = "https://www.google.com/search?q=" + quote_plus(query)
+    try:
+        response = await page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+    except timeout_error as exc:
+        raise SearchRequestError(f"request timeout for query: {query}", retryable=True) from exc
+    except Exception as exc:
+        message = str(exc) or repr(exc)
+        raise SearchRequestError(message, retryable=_is_retryable_error_message(message)) from exc
+
+    status_code = response.status if response is not None else None
+    if status_code == 429 or (status_code is not None and status_code >= 500):
+        raise SearchRequestError(
+            f"temporary HTTP {status_code} for query: {query}",
+            retryable=True,
+            status_code=status_code,
+        )
+
     await page.wait_for_timeout(4000)
 
     try:
@@ -32,9 +468,16 @@ async def search_google(page: Any, query: str) -> tuple[str, list[dict[str, str]
     except Exception:
         pass
 
-    page_text = await page.locator("body").inner_text(timeout=20000)
+    try:
+        page_text = await page.locator("body").inner_text(timeout=20000)
+    except timeout_error as exc:
+        raise SearchRequestError(f"page text timeout for query: {query}", retryable=True) from exc
+    except Exception as exc:
+        message = str(exc) or repr(exc)
+        raise SearchRequestError(message, retryable=_is_retryable_error_message(message)) from exc
+
     results = await extract_search_results(page)
-    return page_text, results
+    return page_text, results, page.url
 
 
 async def extract_search_results(page: Any) -> list[dict[str, str]]:

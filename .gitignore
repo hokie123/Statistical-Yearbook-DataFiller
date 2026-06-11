@@ -1,6 +1,15 @@
+# Python
 __pycache__/
 *.py[cod]
+*.egg-info/
 
-evidence_review_output.csv
-test_review_output.csv
-test_review_output - 副本.csv
+# Browser profile (persistent Google session, contains cookies)
+browser_profile/
+
+# Generated output CSVs
+*_output.csv
+*_output_*.csv
+
+# IDE
+.vscode/
+.idea/

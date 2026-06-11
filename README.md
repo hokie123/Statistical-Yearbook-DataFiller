@@ -84,8 +84,8 @@ statistical_yearbook_datafiller/
 ### 1. Install
 
 ```bash
-pip install pandas playwright
-playwright install
+pip install pandas playwright playwright-stealth
+playwright install chromium
 ```
 
 也可以直接安装为本地命令行工具：
@@ -103,7 +103,7 @@ pip install -e .
 - `ent_code`
 - `rural_income`
 
-示例：
+示例 `data.csv`：
 
 ```csv
 year,ent_county,ent_code,rural_income
@@ -112,15 +112,23 @@ year,ent_county,ent_code,rural_income
 2020,遂宁市安居区,510904,
 ```
 
-### 3. Generate a review sheet only
+### 3. First-time setup: resolve Google CAPTCHA
 
-先只生成待复核表，不发起浏览器抓取：
+由于 Google 对自动化工具的反爬检测，首次运行需要手动解决一次 CAPTCHA。
+只需做一次，之后永久复用。
 
 ```bash
-python main.py --prepare-only
+python main.py --resolve-captcha
 ```
 
-### 4. Run full evidence collection
+执行后浏览器会在**可见模式**弹出，你在浏览器中完成人机验证，然后关闭浏览器即可。
+验证通过的 session 会自动保存到 `./browser_profile/`，后续不再需要重复验证。
+
+> 如果你在中国大陆，需要配置代理才能访问 Google，见下方**代理配置**说明。
+
+### 4. Run evidence collection
+
+session 保存后，日常运行只需要一条命令：
 
 ```bash
 python main.py --headless
@@ -132,11 +140,49 @@ python main.py --headless
 sydf --headless
 ```
 
-常用参数：
+### Proxy configuration
+
+如果你需要通过代理访问 Google（如在中国大陆使用 Clash/V2Ray 等）：
+
+**方式一：环境变量（推荐）**
 
 ```bash
-python main.py --headless --max-rows 20
-python main.py --input custom_input.csv --output custom_output.csv
+set HTTP_PROXY=http://127.0.0.1:7892
+set HTTPS_PROXY=http://127.0.0.1:7892
+python main.py --headless
+```
+
+**方式二：命令行参数**
+
+```bash
+python main.py --headless --proxy-ports 7892
+```
+
+多端口轮转：
+
+```bash
+python main.py --headless --proxy-ports 7890,7891,7892
+```
+
+> 默认端口为 `7892`，适合 Clash 混合端口。无需在代码中配置多个节点，由 Clash 面板管理节点切换。
+
+### Common parameters
+
+```bash
+# 限制处理行数（调试用）
+python main.py --headless --max-rows 10
+
+# 指定输入/输出文件
+python main.py --headless --input my_data.csv --output my_result.csv
+
+# 只生成待复核表（不开浏览器）
+python main.py --prepare-only
+
+# 自定义浏览器 profile 路径
+python main.py --headless --user-data-dir ./my_profile
+
+# Session 过期后重新验证
+python main.py --resolve-captcha --user-data-dir ./my_profile
 ```
 
 ### 5. Enable optional LLM classification
@@ -184,18 +230,22 @@ python main.py --headless ^
 
 ## Limitations
 
-- 当前抓取入口仍然依赖搜索结果页，不应把搜索摘要本身视为最终依据
-- 当前数值提取是规则法，不等于已完成结构化识别
+- 当前抓取入口仍然依赖 Google 搜索结果页，不应把搜索摘要本身视为最终依据
+- Google 对自动化工具有反爬检测，首次使用需通过 `--resolve-captcha` 手动验证一次，session 持久化后后续可完全无头运行
+- 在中国大陆使用需要配置代理（见上方 Proxy configuration 章节）
+- 当前数值提取是规则法（按文本顺序取第一个 ≥4 位数字），可能提取到年份而非数值，建议人工复核 `suggested_fill_value` 列
 - 不建议直接将建议值自动写回核心解释变量或核心被解释变量
 - 面向长期使用时，建议扩展为多模式检索：官方网页直连、PDF 解析、搜索 API
 
 ## Roadmap
 
-- 支持多指标配置，而不是把指标写死在脚本里
-- 增加官方来源优先抓取和页面级提取
-- 增加 PDF / 统计公报解析
-- 增加更细的 LLM 辅助字段抽取，但保留人工确认环节
-- 增加 Excel 审核模板或轻量复核界面
+- [x] 多指标配置（不再把指标写死在脚本里）
+- [x] CAPTCHA 自动检测与恢复（playwright-stealth + 持久化 session）
+- [x] 代理支持与端口轮转
+- [ ] 官方来源优先抓取和页面级提取
+- [ ] PDF / 统计公报解析
+- [ ] 更细的 LLM 辅助字段抽取，但保留人工确认环节
+- [ ] Excel 审核模板或轻量复核界面
 
 ## License
 
