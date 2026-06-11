@@ -54,7 +54,7 @@ def apply_prepare_only_updates(df: pd.DataFrame, target_indices: list[int]) -> p
 
 
 async def run_collection(config: AppConfig) -> None:
-    # ---------- 特殊模式：仅解决 CAPTCHA ----------
+    # ---------- Special mode: resolve CAPTCHA only ----------
     if config.resolve_captcha:
         from playwright.async_api import async_playwright
         from .scraping import resolve_captcha_interactive
@@ -68,7 +68,7 @@ async def run_collection(config: AppConfig) -> None:
             )
         return
 
-    # ---------- 常规数据采集 ----------
+    # ---------- Normal evidence collection ----------
     df = pd.read_csv(config.input_path, dtype={CODE_COL: str})
     df = ensure_columns(df)
     df = ensure_runtime_columns(df)
@@ -91,7 +91,7 @@ async def run_collection(config: AppConfig) -> None:
     from playwright.async_api import async_playwright
 
     async with async_playwright() as playwright:
-        # 创建持久化浏览器上下文（保存 session，跨查询复用）
+        # Create persistent browser context (saves session across queries)
         captcha_was_resolved = False
         context = await create_persistent_context(
             playwright=playwright,

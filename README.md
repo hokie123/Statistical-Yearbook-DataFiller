@@ -1,6 +1,14 @@
-# Statistical-Yearbook-DataFiller
+<p align="right">
+  <a href="README.md"><strong>中文</strong></a> | <a href="README_EN.md"><strong>English</strong></a>
+</p>
 
-Statistical-Yearbook-DataFiller is a traceable evidence collection and verification tool for filling or validating missing values in city/county-level statistical yearbook panels.
+<h1 align="center">Statistical-Yearbook-DataFiller</h1>
+
+<p align="center">
+  面向城市/区县/县域面板数据研究的证据链助手 —— 为缺失值核验、补充和异常值复核生成可追溯、可复核、可引用的搜索证据。
+</p>
+
+`Statistical-Yearbook-DataFiller` 不是"自动替代研究者判断"的填值器，而是一个面向城市/区县/县域面板数据研究的**证据链助手**：它为缺失值核验、补充和异常值复核生成可追溯、可复核、可引用的搜索证据。
 
 `Statistical-Yearbook-DataFiller` 不是“自动替代研究者判断”的填值器，而是一个面向城市/区县/县域面板数据研究的证据链助手：它为缺失值核验、补充和异常值复核生成可追溯、可复核、可引用的搜索证据。
 

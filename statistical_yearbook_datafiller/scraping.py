@@ -44,7 +44,7 @@ RETRYABLE_ERROR_MARKERS = (
     "proxy",
 )
 
-# CAPTCHA 检测 —— Google 反爬页面的特征
+# CAPTCHA detection markers — Google anti-bot page fingerprints
 CAPTCHA_MARKERS = (
     "/sorry/index",
     "unusual traffic",
@@ -171,19 +171,21 @@ async def create_persistent_context(
 
 async def resolve_captcha_interactive(playwright: Any, user_data_dir: str, proxy_port: int | None = None) -> None:
     """
-    交互式 CAPTCHA 解决工具。
-    在可见模式打开 Google，让用户手动完成验证。
-    验证完成后关闭浏览器，session 保存在 user_data_dir 中。
+    Interactive CAPTCHA resolver tool.
+
+    Opens Google in headed (visible) mode so the user can manually
+    complete the CAPTCHA. The session is saved to ``user_data_dir``
+    for reuse in subsequent headless runs.
     """
     print(
         "\n========================================"
-        "\n  Google CAPTCHA 手动解决工具"
+        "\n  Google CAPTCHA Resolver"
         "\n========================================"
-        "\n正在打开浏览器..."
-        "\n请在浏览器中："
-        "\n  1. 完成 Google 的人机验证"
-        "\n  2. 验证通过后，关闭浏览器窗口"
-        "\n（session 将保存到后续复用）"
+        "\nOpening browser..."
+        "\nPlease:"
+        "\n  1. Complete the Google verification prompt"
+        "\n  2. After verification, close the browser window"
+        "\n(The session will be saved for future reuse)"
         "\n========================================"
     )
 
@@ -208,39 +210,39 @@ async def resolve_captcha_interactive(playwright: Any, user_data_dir: str, proxy
 
     page = await context.new_page()
 
-    # 应用 stealth
+    # Apply stealth evasions
     try:
         await apply_stealth_to_page(page)
     except Exception:
         pass
 
-    # 打开 Google，触发 CAPTCHA
+    # Open Google to trigger CAPTCHA
     await page.goto("https://www.google.com/search?q=test", wait_until="domcontentloaded", timeout=60000)
     await page.wait_for_timeout(2000)
 
-    # 如果已经跳到了 sorry 页面，直接导航过去
+    # If already redirected to the CAPTCHA page, notify the user
     if is_captcha_page(page.url):
-        print("  CAPTCHA 页面已加载，请在浏览器中完成验证...")
+        print("  CAPTCHA page loaded. Please complete the verification in the browser...")
     else:
-        print("  Google 首页已加载，可以手动搜索触发验证，或关闭浏览器。")
+        print("  Google homepage loaded. You can search to trigger verification, or close the browser.")
 
-    # 轮询检测 CAPTCHA 是否已解决（URL 不再是 sorry 页面）
-    print("  等待验证完成（检测到 CAPTCHA 解除后将自动继续）...")
-    for _ in range(300):  # 最多等 5 分钟
+    # Poll until the CAPTCHA is resolved (URL is no longer on the /sorry/ page)
+    print("  Waiting for verification to complete (auto-detects CAPTCHA clearance)...")
+    for _ in range(300):  # Max 5 minutes
         await asyncio.sleep(1)
         try:
             current_url = page.url
             if not is_captcha_page(current_url) and "google.com/search" in current_url:
-                print("\n  ✅ CAPTCHA 已解除！session 已保存。")
+                print("\n  ✅ CAPTCHA cleared! Session saved.")
                 break
         except Exception:
             break
     else:
-        print("\n  轮询超时，但 session 可能已经保存。")
+        print("\n  Polling timed out, but the session may have been saved.")
 
     await page.close()
     await context.close()
-    print("  浏览器已关闭，现在可以用 --headless 模式运行了。\n")
+    print("  Browser closed. You can now run with --headless.\n")
 
 
 async def recover_from_captcha_block(
@@ -256,10 +258,10 @@ async def recover_from_captcha_block(
     """
     print(
         "\n========================================"
-        "\n  Google CAPTCHA 检测到！"
+        "\n  Google CAPTCHA Detected!"
         "\n========================================"
-        "\n浏览器将在可见模式打开，请完成人机验证。"
-        "\n验证通过后页面会自动跳转，无需手动操作。"
+        "\nOpening browser in visible mode for you to complete verification."
+        "\nThe page will redirect automatically after approval."
         "\n========================================"
     )
 
@@ -294,23 +296,23 @@ async def recover_from_captcha_block(
     page = await recovery_context.new_page()
     await page.goto(block_url, wait_until="domcontentloaded", timeout=60000)
 
-    # 轮询检测 CAPTCHA 是否已解决
-    print("  等待人机验证完成（自动检测，最多等待 5 分钟）...")
+    # Poll until CAPTCHA is resolved
+    print("  Waiting for verification (auto-detection, up to 5 minutes)...")
     for _ in range(300):
         await asyncio.sleep(1)
         try:
             current_url = page.url
             if not is_captcha_page(current_url) and ("google.com/search" in current_url or "google.com/webhp" in current_url):
-                print("  ✅ CAPTCHA 已解除！继续执行。")
+                print("  ✅ CAPTCHA cleared! Resuming execution.")
                 break
         except Exception:
             await asyncio.sleep(1)
             continue
     else:
-        print("  ⚠️ 轮询超时，尝试继续（session 可能已保存）。")
+        print("  ⚠️ Polling timed out. Continuing (session may have been saved).")
 
     await page.close()
-    print("  CAPTCHA 验证完成！session 已保存到浏览器 profile。\n")
+    print("  CAPTCHA resolved! Session saved to browser profile.\n")
 
     return recovery_context
 
@@ -326,11 +328,11 @@ async def search_google_with_context(
     timeout_error = _get_playwright_timeout_error()
     page = await context.new_page()
 
-    # 对每个新页面应用 stealth 反检测
+    # Apply stealth evasion to each new page
     try:
         await apply_stealth_to_page(page)
     except Exception:
-        pass  # stealth 优化非必需，出错也不影响
+        pass  # Stealth is non-critical; continue if it fails
 
     search_url = "https://www.google.com/search?q=" + quote_plus(query)
     try:
@@ -346,7 +348,7 @@ async def search_google_with_context(
     status_code = response.status if response is not None else None
     final_url = page.url
 
-    # 检测 CAPTCHA
+    # Detect CAPTCHA page
     if is_captcha_page(final_url):
         await page.close()
         raise CaptchaBlockedError(block_url=final_url)
