@@ -22,6 +22,13 @@ class AppConfig:
     llm_model: str
     user_data_dir: str
     resolve_captcha: bool
+    # DeepSeek AI Overview parser options (mutually exclusive with browser mode)
+    ds_parse: bool = False
+    ds_input: str = ""
+    ds_output: str = ""
+    ds_api_key: str = ""
+    ds_api_base: str = ""
+    ds_model: str = ""
 
 
 DEFAULT_PROXY_PORTS = [7892]
@@ -118,6 +125,39 @@ def parse_args(base_dir: Path) -> AppConfig:
         default=os.getenv("LLM_MODEL", "").strip(),
         help="Model name for the LLM classification step.",
     )
+
+    # ---- DeepSeek AI Overview parser ----
+    parser.add_argument(
+        "--ds-parse",
+        action="store_true",
+        help="Run DeepSeek AI Overview parser instead of browser evidence collection.",
+    )
+    parser.add_argument(
+        "--ds-input",
+        default="",
+        help="Input CSV path for DeepSeek parser (default: ./ai_overview_input.csv).",
+    )
+    parser.add_argument(
+        "--ds-output",
+        default="",
+        help="Output CSV path for DeepSeek parser (default: ./ai_overview_parsed.csv).",
+    )
+    parser.add_argument(
+        "--ds-api-key",
+        default=os.getenv("DEEPSEEK_API_KEY", "").strip(),
+        help="API key for DeepSeek (or set DEEPSEEK_API_KEY env var).",
+    )
+    parser.add_argument(
+        "--ds-api-base",
+        default=os.getenv("DS_API_BASE", "https://api.deepseek.com").strip(),
+        help="API base URL for DeepSeek parser (default: https://api.deepseek.com).",
+    )
+    parser.add_argument(
+        "--ds-model",
+        default=os.getenv("DS_MODEL", "deepseek-v4-flash").strip(),
+        help="Model name for DeepSeek parser (default: deepseek-v4-flash).",
+    )
+
     args = parser.parse_args()
     retry_delay_min = max(0.0, args.retry_delay_min)
     retry_delay_max = max(retry_delay_min, args.retry_delay_max)
@@ -138,4 +178,10 @@ def parse_args(base_dir: Path) -> AppConfig:
         llm_model=args.llm_model,
         user_data_dir=args.user_data_dir,
         resolve_captcha=args.resolve_captcha,
+        ds_parse=args.ds_parse,
+        ds_input=args.ds_input,
+        ds_output=args.ds_output,
+        ds_api_key=args.ds_api_key,
+        ds_api_base=args.ds_api_base.rstrip("/"),
+        ds_model=args.ds_model,
     )
